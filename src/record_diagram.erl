@@ -6,15 +6,29 @@
 -export([main/1]).
 
 main(A) ->
-	%RecordInfo = lists:flatten([read_file_records(File) || File <- A]),
+	{ok, [[HomeDir]]} = init:get_argument(home),
+	JarPath = filename:join([HomeDir, ".record_diagram/plantuml.jar"]),
 	{Opts, Files} = proc_args(A, [], []),
 	case proplists:get_bool(help, Opts) of
 		true -> usage() ;
 		false ->
 			IoList = plantuml_text(Files, Opts),
-			IoDev = proplists:get_value(out, Opts, standard_io),
-			ok = file:write(IoDev, IoList),
-			file:close(IoDev)
+			case proplists:get_value(out, Opts) of
+				undefined ->
+					case proplists:get_value(png, Opts) of
+						undefined ->
+							file:write(standard_io, IoList);
+						PngFile ->
+							TempFile = filename:rootname(PngFile) ++ ".tmp",
+							extract_jar(JarPath),
+							ok = file:write_file(TempFile, IoList),
+							os:cmd(f("java -jar ~s ~s", [JarPath, TempFile])),
+							file:delete(TempFile)
+					end;
+				IoDev ->
+					file:write(IoDev, IoList),
+					file:close(IoDev)
+			end
 	end
 	.
 
@@ -48,7 +62,8 @@ usage() ->
 	io:fwrite("options:~n"),
 	io:fwrite("\t--help           - Print this help~n"),
 	io:fwrite("\t--linked         - Display only records containing/contained by other records~n"),
-	io:fwrite("\t--out filename   - Write output to file instead of stdout~n"),
+	io:fwrite("\t--out filename   - Write intermediate PlantUML text file.  No PNG file will be generated.~n"),
+	io:fwrite("\t--png filename   - Name of output image file~n"),
 	io:fwrite("~n")
 	.
 
@@ -65,6 +80,9 @@ proc_args(["--out" | Args], Opts, Files) ->
 	{ok, IoDev} = file:open(hd(Args), [write]),
 	proc_args(tl(Args), [{out, IoDev} | Opts], Files)
 	;
+proc_args(["--png" | Args], Opts, Files) ->
+	proc_args(tl(Args), [{png, hd(Args)} | Opts], Files)
+	;
 proc_args([A | Args], Opts, Files) ->
 	proc_args(Args, Opts, [A | Files])
 	.
@@ -77,7 +95,7 @@ parallel_read(Paths) ->
 	.
 
 read_file_records(Path) ->
-	Modname = filename:basename(Path, filename:extension(Path)),
+	Modname = filename:rootname(filename:basename(Path)),
 	{ok, Epp} = epp:open(Path, []),
 	try
 		RecordInfo = read_forms(Epp),
@@ -87,6 +105,22 @@ read_file_records(Path) ->
 		E:R ->
 			io:fwrite(standard_error, "Error processing file '~s'~n~p:~p~n~p", [Path, E, R, erlang:get_stacktrace()]),
 			{E,R}
+	end
+	.
+
+extract_jar(JarPath) ->
+	case filelib:is_dir(filename:dirname(JarPath)) of
+		true -> ok;
+		false -> ok = file:make_dir(filename:dirname(JarPath))
+	end,
+	case filelib:is_file(JarPath) of
+		true -> already_created;
+		false ->
+			ArchiveFileName = "record_diagram/ebin/plantuml.jar",
+			{ok, Sections} = escript:extract("record_diagram", []),
+			Archive = proplists:get_value(archive, Sections),
+			{ok, [{ArchiveFileName, PlantumlJar}]} = zip:extract(Archive, [{file_list, [ArchiveFileName]}, memory]),
+			ok = file:write_file(JarPath, PlantumlJar)
 	end
 	.
 
