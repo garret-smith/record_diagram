@@ -3,6 +3,8 @@
 
 -module(record_diagram).
 
+-compile(export_all).
+
 -export([main/1]).
 
 main(A) ->
@@ -76,6 +78,9 @@ proc_args(["--linked" | Args], Opts, Files) ->
 proc_args(["--help" | Args], Opts, Files) ->
 	proc_args(Args, [help | Opts], Files)
 	;
+proc_args(["-h" | Args], Opts, Files) ->
+	proc_args(Args, [help | Opts], Files)
+	;
 proc_args(["--out" | Args], Opts, Files) ->
 	{ok, IoDev} = file:open(hd(Args), [write]),
 	proc_args(tl(Args), [{out, IoDev} | Opts], Files)
@@ -137,8 +142,8 @@ record_text({record, {Modname, RecName}, Fields}) ->
 
 field_text({field, FieldName, Types}) -> f("\t~p : ~s~n", [FieldName, fmt_type(Types)]) .
 
-fmt_type({{}, Type}) -> "{" ++ string:join([f("~s", [fmt_type(T)]) || T <- Type], ", ") ++ "}" ;
-fmt_type({[], Type}) -> f("~s[]", [fmt_type(Type)]) ;
+fmt_type({list, Type}) -> f("~s[]", [fmt_type(Type)]) ;
+fmt_type({tuple, Type}) -> "{" ++ string:join([f("~s", [fmt_type(T)]) || T <- Type], ", ") ++ "}" ;
 fmt_type({union, Type}) -> fmt_type(Type) ;
 fmt_type({Mod, Type}) -> f("~p:~p", [Mod, Type]) ;
 fmt_type([]) -> "none" ;
@@ -162,18 +167,18 @@ record_rel({record, {Mod, RecName}, Fields}, RecordTypes) ->
 complete_type({_,_} = T, _Mod) -> T ;
 complete_type(T, Mod) -> {Mod, T} .
 
-subtypes({{}, Type}) -> subtypes(Type) ;
-subtypes({[], Type}) -> subtypes(Type) ;
+subtypes({list, Type}) -> subtypes(Type) ;
+subtypes({tuple, Type}) -> subtypes(Type) ;
 subtypes({union, Type}) -> subtypes(Type) ;
 subtypes({M, _} = Type) when is_atom(M) -> [Type] ;
 subtypes(Type) when is_atom(Type) -> [Type] ;
 subtypes(Type) when is_atom(Type) -> [Type] ;
 subtypes(Type) when is_list(Type) -> lists:flatten([subtypes(T) || T <- Type]) .
 
-typematch({{}, Type}, RecordTypes, Mod) ->
+typematch({list, Type}, RecordTypes, Mod) ->
 	typematch(Type, RecordTypes, Mod)
 	;
-typematch({[], Type}, RecordTypes, Mod) ->
+typematch({tuple, Type}, RecordTypes, Mod) ->
 	typematch(Type, RecordTypes, Mod)
 	;
 typematch({union, Type}, RecordTypes, Mod) ->
@@ -229,28 +234,10 @@ field_info({record_field, _, {atom, _, FieldName}, _}) ->
 	{field, FieldName, []}
 	;
 field_info({typed_record_field, {record_field, _, {atom, _, FieldName}}, Type}) ->
-	{field, FieldName, [field_type(Type)]}
+	{field, FieldName, [typename(Type)]}
 	;
 field_info({typed_record_field, {record_field, _, {atom, _, FieldName}, _}, Type}) ->
 	{field, FieldName, [typename(Type)]}
-	.
-
-
-field_type({type, _, T, []}) when is_atom(T) ->
-	T
-	;
-field_type({type, _, T, Ttype}) when is_atom(T) ->
-	{T, union_types(Ttype, [])}
-	;
-field_type({type, _, union, UnionTypes}) ->
-	{union, union_types(UnionTypes, [])}
-	.
-
-union_types([], Acc) ->
-	Acc
-	;
-union_types([T | UnionTypes], Acc) ->
-	union_types(UnionTypes, [typename(T) | Acc])
 	.
 
 typename({var, _, Lit}) ->
@@ -259,14 +246,17 @@ typename({var, _, Lit}) ->
 typename({atom, _, TypeName}) ->
 	TypeName
 	;
-typename({type, _, list, Subtype}) ->
-	{[], union_types(Subtype, [])}
+typename({type, _, Type, Subtypes}) when is_list(Subtypes) andalso (Type == list orelse Type == union orelse Type == tuple) ->
+	{Type, [typename(T) || T <- Subtypes]}
 	;
 typename({type, _, TypeName, _}) ->
 	TypeName
 	;
 typename({remote_type, _, [{atom, _, Mod}, {atom, _, Type}, L]}) when is_list(L) ->
 	{Mod, Type}
+	;
+typename({ann_type, _, [{var, _, _}, T]}) ->
+	typename(T)
 	;
 typename({A, _, _}) when is_atom(A) ->
 	A
