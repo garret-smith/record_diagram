@@ -122,7 +122,7 @@ extract_jar(JarPath) ->
 		true -> already_created;
 		false ->
 			ArchiveFileName = "record_diagram/ebin/plantuml.jar",
-			{ok, Sections} = escript:extract("record_diagram", []),
+			{ok, Sections} = escript:extract(escript:script_name(), []),
 			Archive = proplists:get_value(archive, Sections),
 			{ok, [{ArchiveFileName, PlantumlJar}]} = zip:extract(Archive, [{file_list, [ArchiveFileName]}, memory]),
 			ok = file:write_file(JarPath, PlantumlJar)
