@@ -15,21 +15,27 @@ main(A) ->
 		true -> usage() ;
 		false ->
 			IoList = plantuml_text(Files, Opts),
-			case proplists:get_value(out, Opts) of
-				undefined ->
-					case proplists:get_value(png, Opts) of
-						undefined ->
-							file:write(standard_io, IoList);
-						PngFile ->
-							TempFile = filename:rootname(PngFile) ++ ".tmp",
-							extract_jar(JarPath),
-							ok = file:write_file(TempFile, IoList),
-							os:cmd(f("java -jar ~s ~s", [JarPath, TempFile])),
-							file:delete(TempFile)
-					end;
-				IoDev ->
+			Out = proplists:get_value(out, Opts),
+			Png = proplists:get_value(png, Opts),
+			Eps = proplists:get_value(eps, Opts),
+			case {Out, Png, Eps} of
+				{undefined, undefined, undefined} ->
+					file:write(standard_io, IoList);
+				{IoDev, undefined, undefined} ->
 					file:write(IoDev, IoList),
-					file:close(IoDev)
+					file:close(IoDev);
+				{undefined, Png, undefined} ->
+					TempFile = filename:rootname(Png) ++ ".tmp",
+					extract_jar(JarPath),
+					ok = file:write_file(TempFile, IoList),
+					os:cmd(f("java -jar ~s ~s", [JarPath, TempFile])),
+					file:delete(TempFile);
+				{undefined, undefined, Eps} ->
+					TempFile = filename:rootname(Eps) ++ ".tmp",
+					extract_jar(JarPath),
+					ok = file:write_file(TempFile, IoList),
+					os:cmd(f("java -jar ~s -teps ~s", [JarPath, TempFile])),
+					file:delete(TempFile)
 			end
 	end
 	.
@@ -66,6 +72,7 @@ usage() ->
 	io:fwrite("\t--linked         - Display only records containing/contained by other records~n"),
 	io:fwrite("\t--out filename   - Write intermediate PlantUML text file.  No PNG file will be generated.~n"),
 	io:fwrite("\t--png filename   - Name of output image file~n"),
+	io:fwrite("\t--eps filename   - Name of output EPS file~n"),
 	io:fwrite("~n")
 	.
 
@@ -87,6 +94,9 @@ proc_args(["--out" | Args], Opts, Files) ->
 	;
 proc_args(["--png" | Args], Opts, Files) ->
 	proc_args(tl(Args), [{png, hd(Args)} | Opts], Files)
+	;
+proc_args(["--eps" | Args], Opts, Files) ->
+	proc_args(tl(Args), [{eps, hd(Args)} | Opts], Files)
 	;
 proc_args([A | Args], Opts, Files) ->
 	proc_args(Args, Opts, [A | Files])
