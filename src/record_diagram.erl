@@ -113,7 +113,7 @@ read_file_records(Path) ->
 	Modname = filename:rootname(filename:basename(Path)),
 	{ok, Epp} = epp:open(Path, []),
 	try
-		RecordInfo = read_forms(Epp),
+		RecordInfo = rd_extract_types:from_epp(Epp),
 		epp:close(Epp),
 		[{record, {list_to_atom(Modname), RName}, Fields} || {record, RName, Fields} <- RecordInfo]
 	catch
@@ -221,55 +221,4 @@ uniq_list0(First, [Next | L], Acc) when First == Next ->
 uniq_list0(First, [Next | L], Acc) ->
 	uniq_list0(Next, L, [First | Acc])
 	.
-
-
-read_forms(Epp) ->
-	read_forms(epp:parse_erl_form(Epp), Epp, [])
-	.
-
-read_forms({eof, _Line}, _Epp, Acc) ->
-	Acc
-	;
-read_forms({ok, {attribute, _, record, {Name, Fields}}}, Epp, Acc) ->
-	read_forms(epp:parse_erl_form(Epp), Epp, [{record, Name, [field_info(F) || F <- Fields]} | Acc])
-	;
-read_forms(_, Epp, Acc) ->
-	read_forms(epp:parse_erl_form(Epp), Epp, Acc)
-	.
-
-field_info({record_field, _, {atom, _, FieldName}}) ->
-	{field, FieldName, []}
-	;
-field_info({record_field, _, {atom, _, FieldName}, _}) ->
-	{field, FieldName, []}
-	;
-field_info({typed_record_field, {record_field, _, {atom, _, FieldName}}, Type}) ->
-	{field, FieldName, [typename(Type)]}
-	;
-field_info({typed_record_field, {record_field, _, {atom, _, FieldName}, _}, Type}) ->
-	{field, FieldName, [typename(Type)]}
-	.
-
-typename({var, _, Lit}) ->
-	Lit
-	;
-typename({atom, _, TypeName}) ->
-	TypeName
-	;
-typename({type, _, Type, Subtypes}) when is_list(Subtypes) andalso (Type == list orelse Type == union orelse Type == tuple) ->
-	{Type, [typename(T) || T <- Subtypes]}
-	;
-typename({type, _, TypeName, _}) ->
-	TypeName
-	;
-typename({remote_type, _, [{atom, _, Mod}, {atom, _, Type}, L]}) when is_list(L) ->
-	{Mod, Type}
-	;
-typename({ann_type, _, [{var, _, _}, T]}) ->
-	typename(T)
-	;
-typename({A, _, _}) when is_atom(A) ->
-	A
-	.
-
 
