@@ -1,49 +1,60 @@
 -module(rd_extract_types).
 
--export([from_epp/1,from_file/1]).
+-export([from_file/1,field_info/1,typename/1]).
 
--type record_type_info() :: {record, RecordName :: atom(), [field_type_info()]}.
--type field_type_info() :: {field, FieldName :: atom(), FieldType :: ft()}.
+-type record_type_info() :: {RecordName :: atom(), [field_type_info()]}.
+-type field_type_info() :: {FieldName :: atom(), FieldType :: ft()}.
 -type ft() :: atom() | [atom()] | {atom(), atom()}.
 
 from_file(Path) ->
 	{ok, Epp} = epp:open(Path, []),
-	RecordInfo = from_epp(Epp),
+	Forms = all_forms(Epp, []),
 	epp:close(Epp),
+	RecordInfo = lists:flatten([record_info(F) || F <- Forms]),
 	RecordInfo.
 
--spec from_epp(epp:epp_handle()) -> [record_type_info()].
-from_epp(Epp) ->
-	from_forms(epp:parse_erl_form(Epp), Epp, []).
+all_forms(Epp, Acc) ->
+	case epp:parse_erl_form(Epp) of
+		{eof, _Line} -> lists:reverse(Acc);
+		{error, Err} ->
+			io:fwrite(standard_error, "parse error: ~p", [Err]),
+			all_forms(Epp, Acc); % can't find an include, ignore
+		{ok, Form} -> all_forms(Epp, [Form | Acc])
+	end.
 
-from_forms({eof, _Line}, _Epp, Acc) ->
-	Acc;
-from_forms({ok, {attribute, _, record, {Name, Fields}}}, Epp, Acc) ->
-	from_forms(epp:parse_erl_form(Epp), Epp, [{record, Name, [field_info(F) || F <- Fields]} | Acc]);
-from_forms(_, Epp, Acc) ->
-	from_forms(epp:parse_erl_form(Epp), Epp, Acc).
+-spec record_info(Form :: term()) -> record_type_info() | [].
+record_info({attribute, _, record, {Name, Fields}}) ->
+	{Name, [field_info(F) || F <- Fields]};
+record_info(_) ->
+	[].
 
 % field has no type info
 field_info({record_field, _, {atom, _, FieldName}}) ->
-	{field, FieldName, []};
+	{FieldName, {atom, undefined}};
 % field has no type info, but it does have an initializer
 field_info({record_field, _, {atom, _, FieldName}, Init}) ->
-	{field, FieldName, [typename(Init)]};
+	{FieldName, typename(Init)};
 field_info({typed_record_field, {record_field, _, {atom, _, FieldName}}, Type}) ->
-	{field, FieldName, [typename(Type)]};
+	{FieldName, typename(Type)};
 field_info({typed_record_field, {record_field, _, {atom, _, FieldName}, _}, Type}) ->
-	{field, FieldName, [typename(Type)]}.
+	{FieldName, typename(Type)}.
 
 typename({var, _, Lit}) ->
-	Lit;
-typename({atom, _, TypeName}) ->
-	TypeName;
-typename({type, _, Type, Subtypes}) when is_list(Subtypes) andalso (Type == list orelse Type == union orelse Type == tuple) ->
+	{literal, Lit};
+typename({atom, _, Value}) ->
+	{atom, Value};
+typename({type, _, record, [{atom, _, RecType}]}) ->
+	{record, RecType};
+typename({type, _, list, [LType]}) ->
+	{list, typename(LType)};
+typename({type, _, Type, Subtypes}) when Type =:= union; Type =:= tuple ->
+	{Type, [typename(T) || T <- Subtypes]};
+typename({type, _, Type, Subtypes, []}) when Type =:= union; Type =:= tuple ->
 	{Type, [typename(T) || T <- Subtypes]};
 typename({type, _, TypeName, _}) ->
-	TypeName;
-typename({remote_type, _, [{atom, _, Mod}, {atom, _, Type}, L]}) when is_list(L) ->
-	{Mod, Type};
+	{type, TypeName};
+typename({remote_type, _, [{atom, _, Mod}, {atom, _, Type}, _]}) ->
+	{type, {Mod, Type}};
 typename({ann_type, _, [{var, _, _}, T]}) ->
 	typename(T);
 typename({A, _, _}) when is_atom(A) ->

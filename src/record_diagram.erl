@@ -104,23 +104,9 @@ proc_args([A | Args], Opts, Files) ->
 
 parallel_read(Paths) ->
 	Self = self(),
-	Pids = [spawn(fun() -> Self ! read_file_records(Path) end) || Path <- Paths],
+	Pids = [spawn(fun() -> Self ! rd_extract_types:from_file(Path) end) || Path <- Paths],
 	Responses = [receive X->X end || _ <- Pids],
 	lists:flatten(Responses)
-	.
-
-read_file_records(Path) ->
-	Modname = filename:rootname(filename:basename(Path)),
-	{ok, Epp} = epp:open(Path, []),
-	try
-		RecordInfo = rd_extract_types:from_epp(Epp),
-		epp:close(Epp),
-		[{record, {list_to_atom(Modname), RName}, Fields} || {record, RName, Fields} <- RecordInfo]
-	catch
-		E:R ->
-			io:fwrite(standard_error, "Error processing file '~s'~n~p:~p~n~p", [Path, E, R, erlang:get_stacktrace()]),
-			{E,R}
-	end
 	.
 
 extract_jar(JarPath) ->
@@ -142,40 +128,39 @@ extract_jar(JarPath) ->
 f(Fmt) -> io_lib:format(Fmt, []) .
 f(Fmt, L) -> io_lib:format(Fmt, L) .
 
-record_text({record, {Modname, RecName}, Fields}) ->
+record_text({RecName, Fields}) ->
 	[
-		f("class \"~s:~s\" {~n", [Modname, RecName]),
+		f("class \"~s\" {~n", [RecName]),
 		[field_text(Field) || Field <- Fields],
 		f("}~n")
 	]
 	.
 
-field_text({field, FieldName, Types}) -> f("\t~p : ~s~n", [FieldName, fmt_type(Types)]) .
+field_text({FieldName, Types}) -> f("\t~p : ~s~n", [FieldName, fmt_type(Types)]) .
 
-fmt_type({list, Type}) -> f("~s[]", [fmt_type(Type)]) ;
+fmt_type({list, Type}) -> f("[~s]", [fmt_type(Type)]) ;
 fmt_type({tuple, Type}) -> "{" ++ string:join([f("~s", [fmt_type(T)]) || T <- Type], ", ") ++ "}" ;
 fmt_type({union, Type}) -> fmt_type(Type) ;
-fmt_type({Mod, Type}) -> f("~p:~p", [Mod, Type]) ;
+fmt_type({atom, A}) -> f("'~p'", [A]) ;
+fmt_type({type, A}) when is_atom(A) -> fmt_type(A) ;
+fmt_type({type, {Mod, Type}}) -> f("~p:~p", [Mod, Type]) ;
 fmt_type([]) -> "none" ;
 fmt_type([T]) -> f("~s", [fmt_type(T)]) ;
-fmt_type(Tl) when is_list(Tl) -> string:join([fmt_type(T) || T <- Tl -- [undefined]], " | ") ;
+fmt_type(Tl) when is_list(Tl) -> string:join([fmt_type(T) || T <- Tl -- [{atom, undefined}]], " | ") ;
 fmt_type(T) when is_atom(T) -> f("~p", [T]) .
 
 record_relationships(RecordInfo) ->
-	RecordTypes = [Rec || {record, Rec, _} <- RecordInfo],
+	RecordTypes = [Rec || {Rec, _} <- RecordInfo],
 	%io:fwrite("DBG: looking for relationships~nRecordTypes: ~p~nRecordInfo: ~p~n", [RecordTypes, RecordInfo]),
 	Relationships = [record_rel(Record, RecordTypes) || Record <- RecordInfo],
 	uniq_list(lists:flatten(Relationships))
 	.
 
-record_rel({record, {Mod, RecName}, Fields}, RecordTypes) ->
-	FieldTypes = uniq_list(lists:flatten([subtypes(FieldTypes) || {field, _, FieldTypes} <- Fields])),
-	%io:fwrite("DBG: ~p field types: ~p~n", [{Mod, RecName}, FieldTypes]),
-	[{{Mod, RecName}, complete_type(Type, Mod)} || Type <- FieldTypes, typematch(Type, RecordTypes, Mod)]
+record_rel({RecName, Fields}, RecordTypes) ->
+	FieldTypes = uniq_list(lists:flatten([subtypes(FieldTypes) || {_, FieldTypes} <- Fields])),
+	% find anything in FieldTypes that matches something in RecordTypes
+	[{RecName, DestType} || {type, DestType} <- FieldTypes, lists:member(DestType, RecordTypes)]
 	.
-
-complete_type({_,_} = T, _Mod) -> T ;
-complete_type(T, Mod) -> {Mod, T} .
 
 subtypes({list, Type}) -> subtypes(Type) ;
 subtypes({tuple, Type}) -> subtypes(Type) ;
