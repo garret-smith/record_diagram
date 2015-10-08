@@ -53,8 +53,9 @@ plantuml_text(Files, Opts) ->
 					;
 				true ->
 					{Froms, Tos} = lists:unzip(Rels),
-					RelatedRecs = uniq_list(Froms ++ Tos),
-					[record_text(Record) || {record, RName, _} = Record <- RecordInfo, lists:member(RName, RelatedRecs)]
+					RelatedRecs = lists:usort(Froms ++ Tos),
+					[record_text(Record) || {RName, _} = Record <- RecordInfo,
+								lists:member(RName, RelatedRecs)]
 			end,
 			[[f("\"~s\" *-- \"~s\"~n", [fmt_type(From), fmt_type(ToType)]) || ToType <- subtypes(To)] || {From, To} <- Rels],
 			f("@enduml~n")
@@ -153,11 +154,11 @@ record_relationships(RecordInfo) ->
 	RecordTypes = [Rec || {Rec, _} <- RecordInfo],
 	%io:fwrite("DBG: looking for relationships~nRecordTypes: ~p~nRecordInfo: ~p~n", [RecordTypes, RecordInfo]),
 	Relationships = [record_rel(Record, RecordTypes) || Record <- RecordInfo],
-	uniq_list(lists:flatten(Relationships))
+	lists:usort(lists:flatten(Relationships))
 	.
 
 record_rel({RecName, Fields}, RecordTypes) ->
-	FieldTypes = uniq_list(lists:flatten([subtypes(FieldTypes) || {_, FieldTypes} <- Fields])),
+	FieldTypes = lists:usort(lists:flatten([subtypes(FieldTypes) || {_, FieldTypes} <- Fields])),
 	% find anything in FieldTypes that matches something in RecordTypes
 	[{RecName, DestType} || {type, DestType} <- FieldTypes, lists:member(DestType, RecordTypes)]
 	.
@@ -190,20 +191,5 @@ typematch(undefined, _, _) ->
 	;
 typematch(Type, RecordTypes, Mod) when is_atom(Type) ->
 	lists:member({Mod, Type}, RecordTypes)
-	.
-
-uniq_list([]) -> [];
-uniq_list(L) ->
-	L1 = lists:sort(L),
-	uniq_list0(hd(L1), tl(L1), [])
-	.
-uniq_list0(First, [], Acc) ->
-	[First | Acc]
-	;
-uniq_list0(First, [Next | L], Acc) when First == Next ->
-	uniq_list0(Next, L, Acc)
-	;
-uniq_list0(First, [Next | L], Acc) ->
-	uniq_list0(Next, L, [First | Acc])
 	.
 
